@@ -1,0 +1,42 @@
+{
+  "name": "mcp-duckduckresearch",
+  "version": "1.0.0",
+  "description": "MCP server combining DuckDuckGo search with web page visit and screenshot capabilities",
+  "type": "module",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "lint:fix": "biome check --apply ."
+  },
+  "keywords": [
+    "mcp",
+    "duckduckgo",
+    "web-research",
+    "screenshot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.4.1",
+    "duck-duck-scrape": "2.2.7",
+    "playwright": "^1.50.1",
+    "turndown": "7.2.0",
+    "zod": "3.24.1",
+    "zod-to-json-schema": "3.24.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@types/node": "22.13.1",
+    "@types/turndown": "5.0.5",
+    "@vitest/coverage-v8": "3.0.5",
+    "tsx": "4.19.2",
+    "typescript": "5.7.3",
+    "vitest": "3.0.5"
+  }
+}
