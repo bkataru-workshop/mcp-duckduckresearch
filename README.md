@@ -24,99 +24,129 @@ npm install
 npm run build
 ```
 
-## Usage
+## Usage with Cline and Roo Code
 
-Start the server:
+### Installation for Cline
 
-```bash
-npm start
-```
+1. Build the project first using the installation steps above
+2. Configure the MCP server in your Cline settings:
+   
+   Edit your Cline MCP settings file at:
+   `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
 
-The server will start and listen on stdio for MCP protocol commands.
+   Add the following configuration:
+
+   ```json
+   {
+     "mcpServers": {
+       "duckduckmcp": {
+         "command": "node",
+         "args": ["path/to/mcp-duckduckresearch/build/index.js"],
+         "disabled": false,
+         "alwaysAllow": []
+       }
+     }
+   }
+   ```
+
+   Replace `path/to/mcp-duckduckresearch` with the actual path where you cloned this repository.
 
 ### Available Tools
 
+Once configured, the following tools will be available in Roo Code:
+
 #### 1. search_duckduckgo
 
-Search the web using DuckDuckGo.
+Search the web using DuckDuckGo. Example usage in Roo Code:
 
 ```typescript
-// Example request
+<use_mcp_tool>
+<server_name>duckduckmcp</server_name>
+<tool_name>search_duckduckgo</tool_name>
+<arguments>
 {
-  "name": "search_duckduckgo",
-  "arguments": {
-    "query": "typescript mcp server",
-    "options": {
-      "region": "zh-cn",
-      "safeSearch": "MODERATE",
-      "numResults": 50
-    }
+  "query": "typescript best practices",
+  "options": {
+    "region": "zh-cn",
+    "safeSearch": "MODERATE",
+    "numResults": 10
   }
 }
+</arguments>
+</use_mcp_tool>
 ```
 
 #### 2. visit_page
 
-Visit a webpage and extract its content as Markdown.
+Visit a webpage and extract its content as Markdown:
 
 ```typescript
-// Example request
+<use_mcp_tool>
+<server_name>duckduckmcp</server_name>
+<tool_name>visit_page</tool_name>
+<arguments>
 {
-  "name": "visit_page",
-  "arguments": {
-    "url": "https://example.com",
-    "takeScreenshot": false
-  }
+  "url": "https://example.com",
+  "takeScreenshot": false
 }
+</arguments>
+</use_mcp_tool>
 ```
 
 #### 3. take_screenshot
 
-Take a screenshot of the current page.
+Take a screenshot of the currently loaded page:
 
 ```typescript
-// Example request
-{
-  "name": "take_screenshot",
-  "arguments": {}
-}
+<use_mcp_tool>
+<server_name>duckduckmcp</server_name>
+<tool_name>take_screenshot</tool_name>
+<arguments>
+{}
+</arguments>
+</use_mcp_tool>
 ```
 
-### Example Usage Flow
+### Example Workflow in Roo Code
 
 Here's a complete example of searching for information and visiting a result:
 
+1. First, search for information:
 ```typescript
-// 1. Search for information
-const searchRequest = {
-  jsonrpc: "2.0",
-  id: "1",
-  method: "callTool",
-  params: {
-    name: "search_duckduckgo",
-    arguments: {
-      query: "TypeScript best practices",
-      options: {
-        numResults: 10
-      }
-    }
+<use_mcp_tool>
+<server_name>duckduckmcp</server_name>
+<tool_name>search_duckduckgo</tool_name>
+<arguments>
+{
+  "query": "TypeScript best practices",
+  "options": {
+    "numResults": 10,
+    "safeSearch": "MODERATE"
   }
-};
-
-// 2. Visit the first result
-const visitRequest = {
-  jsonrpc: "2.0",
-  id: "2",
-  method: "callTool",
-  params: {
-    name: "visit_page",
-    arguments: {
-      url: "https://example.com/typescript-practices",
-      takeScreenshot: true
-    }
-  }
-};
+}
+</arguments>
+</use_mcp_tool>
 ```
+
+2. Then, visit one of the results:
+```typescript
+<use_mcp_tool>
+<server_name>duckduckmcp</server_name>
+<tool_name>visit_page</tool_name>
+<arguments>
+{
+  "url": "https://example.com/typescript-practices",
+  "takeScreenshot": true
+}
+</arguments>
+</use_mcp_tool>
+```
+
+The server will automatically handle:
+- Browser initialization and cleanup
+- Content extraction and conversion to Markdown
+- Screenshot capture and optimization
+- Error handling and retries
 
 ## Development
 
