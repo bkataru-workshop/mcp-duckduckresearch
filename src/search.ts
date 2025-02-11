@@ -140,9 +140,12 @@ function processSearchResults(
  * ```
  */
 export async function performSearch(args: SearchArgs): Promise<SearchResponse> {
+  console.log("performSearch: started", args);
   const parsedArgs = SearchArgsSchema.safeParse(args);
   if (!parsedArgs.success) {
-    throw new Error(`Invalid arguments: ${parsedArgs.error}`);
+    const error = new Error(`Invalid arguments: ${parsedArgs.error}`);
+    console.error("performSearch: Invalid arguments", error);
+    throw error;
   }
 
   const safeSearch = parsedArgs.data.options?.safeSearch || SafeSearchType.MODERATE;
@@ -154,11 +157,20 @@ export async function performSearch(args: SearchArgs): Promise<SearchResponse> {
       parsedArgs.data.options?.numResults !== undefined ? parsedArgs.data.options.numResults : 50,
   };
 
-  const searchResults = await search(parsedArgs.data.query, searchOptions);
-
-  return processSearchResults(searchResults.results, parsedArgs.data.query, {
-    region: parsedArgs.data.options?.region || "zh-cn",
-    safeSearch,
-    numResults: parsedArgs.data.options?.numResults || 50,
-  });
+  try {
+    console.log("performSearch: calling search", parsedArgs.data.query, searchOptions);
+    const searchResults = await search(parsedArgs.data.query, searchOptions);
+    console.log("performSearch: search returned", searchResults);
+    const processedResults = processSearchResults(searchResults.results, parsedArgs.data.query, {
+      region: parsedArgs.data.options?.region || "zh-cn",
+      safeSearch,
+      numResults: parsedArgs.data.options?.numResults || 50,
+    });
+    console.log("performSearch: finished", processedResults);
+    return processedResults;
+  } catch (e) {
+    const error = new Error(`Search failed: ${(e as Error).message}`);
+    console.error("performSearch: Search failed", error);
+    throw error;
+  }
 }

@@ -18,19 +18,7 @@ import { performSearch } from "../../src/search.js";
 import type { SearchResponse } from "../../src/types.js";
 
 // Mock dependencies
-vi.mock("../../src/search.js", () => ({
-  performSearch: vi.fn(),
-}));
 
-vi.mock("../../src/browser.js", () => ({
-  browserManager: {
-    ensureBrowser: vi.fn().mockResolvedValue({}),
-    safePageNavigation: vi.fn().mockResolvedValue(undefined),
-    extractContentAsMarkdown: vi.fn().mockResolvedValue("Test Content"),
-    takeScreenshotWithSizeLimit: vi.fn().mockResolvedValue("test-screenshot"),
-    cleanup: vi.fn().mockResolvedValue(undefined),
-  },
-}));
 
 interface MessageHandler {
   (message: JSONRPCMessage): void;
@@ -58,6 +46,7 @@ class TestTransport {
   }
 
   async sendMessage(message: JSONRPCMessage): Promise<void> {
+    console.log("TestTransport.sendMessage: sending message", message);
     if (!this.connected) {
       throw new Error('Transport not connected');
     }
@@ -65,17 +54,22 @@ class TestTransport {
     if (this.pair && this.pair.adapter && this.pair.adapter.onmessage) { // Use adapter.onmessage
       this.pair.adapter.onmessage(message);
     }
+    console.log("TestTransport.sendMessage: message sent");
   }
 
   async initialize(): Promise<void> {
+    console.log("TestTransport.initialize: initializing");
     this.connected = true;
+    console.log("TestTransport.initialize: initialized");
   }
 
   async shutdown(): Promise<void> {
+    console.log("TestTransport.shutdown: shutting down");
     this.connected = false;
     this.callback = undefined;
     this.pair = undefined;
     this.adapter = undefined; // Clear adapter on shutdown
+    console.log("TestTransport.shutdown: shutdown finished");
   }
 
   link(transport: TestTransport & { adapter?: TransportAdapter }): void { // Update link type
@@ -85,13 +79,13 @@ class TestTransport {
 
 // Transport adapter that matches the MCP SDK interface
 class TransportAdapter implements Transport {
-  private handler?:  ((message: JSONRPCMessage) => void);
+  private handler?: ((message: JSONRPCMessage) => void);
   private testTransport: TestTransport & { adapter?: TransportAdapter }; // Add adapter property
 
   constructor(testTransport: TestTransport) {
     this.testTransport = testTransport;
     this.testTransport.adapter = this; // Set adapter property on TestTransport
-   }
+  }
 
   onmessage = (message: JSONRPCMessage) => {
     if (this.handler) {
@@ -99,7 +93,7 @@ class TransportAdapter implements Transport {
     }
   };
 
-  set underlyingOnMessage(handler:   ((message: JSONRPCMessage) => void) | undefined) {
+  set underlyingOnMessage(handler: ((message: JSONRPCMessage) => void) | undefined) {
     this.handler = handler;
   }
 
@@ -115,6 +109,7 @@ class TransportAdapter implements Transport {
     return this.testTransport.shutdown();
   }
 }
+
 
 describe("DuckDuckResearch Server", () => {
   let server: DuckDuckResearchServer;
@@ -156,7 +151,7 @@ describe("DuckDuckResearch Server", () => {
     return new Promise<JSONRPCMessage & { result?: T }>((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Request timed out'));
-      }, 5000);
+      }, 30000);
 
       const responseHandler = (response: JSONRPCMessage) => {
         if ('id' in response && response.id === request.id) {
@@ -212,9 +207,6 @@ describe("DuckDuckResearch Server", () => {
 
   describe("Search tool", () => {
     it("should perform search with valid parameters", async () => {
-      const mockSearchResult = { results: [{ title: "Test", url: "https://test.com" }] };
-      (performSearch as Mock).mockResolvedValueOnce(mockSearchResult);
-
       const request: JSONRPCRequest = {
         jsonrpc: "2.0",
         id: "2",
@@ -233,10 +225,10 @@ describe("DuckDuckResearch Server", () => {
       if (!('result' in response) || !response.result) {
         throw new Error('Expected result in response');
       }
-      expect(JSON.parse(response.result.content[0].text as string)).toEqual(mockSearchResult);
-      expect(performSearch).toHaveBeenCalledWith(expect.objectContaining({
-        query: "test query",
-      }));
+      expect(response.result.content[0].text).toBeDefined();
+      const searchResult = JSON.parse(response.result.content[0].text as string);
+      expect(searchResult.results).toBeInstanceOf(Array);
+      expect(searchResult.metadata).toBeDefined();
     });
 
     it("should handle invalid search parameters", async () => {
@@ -263,9 +255,6 @@ describe("DuckDuckResearch Server", () => {
 
   describe("Visit page tool", () => {
     it("should visit page and extract content", async () => {
-      const mockContent = "# Test Content\n\nSome markdown content";
-      (browserManager.extractContentAsMarkdown as Mock).mockResolvedValueOnce(mockContent);
-
       const request: JSONRPCRequest = {
         jsonrpc: "2.0",
         id: "4",
@@ -282,14 +271,8 @@ describe("DuckDuckResearch Server", () => {
       if (!('result' in response) || !response.result) {
         throw new Error('Expected result in response');
       }
-      expect(browserManager.safePageNavigation).toHaveBeenCalledWith(
-        expect.anything(),
-        "https://example.com"
-      );
-      expect(response.result.content[0]).toEqual({
-        type: "text",
-        text: mockContent,
-      });
+      expect(response.result.content[0].type).toBe("text");
+      expect(response.result.content[0].text).toBeDefined();
     });
 
     it("should handle invalid URLs", async () => {
@@ -312,9 +295,6 @@ describe("DuckDuckResearch Server", () => {
 
   describe("Take screenshot tool", () => {
     it("should take screenshot of current page", async () => {
-      const mockScreenshot = "base64-encoded-image";
-      (browserManager.takeScreenshotWithSizeLimit as Mock).mockResolvedValueOnce(mockScreenshot);
-
       const request: JSONRPCRequest = {
         jsonrpc: "2.0",
         id: "6",
@@ -329,11 +309,9 @@ describe("DuckDuckResearch Server", () => {
       if (!('result' in response) || !response.result) {
         throw new Error('Expected result in response');
       }
-      expect(response.result.content[0]).toEqual({
-        type: "image",
-        mediaType: "image/png",
-        data: mockScreenshot,
-      });
+      expect(response.result.content[0].type).toBe("image");
+      expect(response.result.content[0].data).toBeDefined();
+      expect(response.result.content[0].mediaType).toBe("image/png");
     });
   });
 

@@ -11,30 +11,14 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { browserManager } from "./browser.js";
 import { performSearch } from "./search.js";
+import { zodToJsonSchema } from "zod-to-json-schema";
 import { SearchArgsSchema, VisitPageArgsSchema } from "./types.js";
 
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 
-/**
- * MCP Server implementation that provides DuckDuckGo search and web page interaction capabilities.
- * Implements three main tools:
- * - search_duckduckgo: Search using DuckDuckGo
- * - visit_page: Visit and extract content from a webpage
- * - take_screenshot: Take a screenshot of the current page
- *
- * @example
- * ```typescript
- * const server = new DuckDuckResearchServer();
- * await server.run();
- * ```
- */
 export class DuckDuckResearchServer {
   private server: Server;
 
-  /**
-   * Initializes a new DuckDuckResearch server instance.
-   * Sets up tool handlers and error handling.
-   */
   constructor() {
     this.server = new Server(
       {
@@ -45,7 +29,6 @@ export class DuckDuckResearchServer {
         capabilities: {
           tools: {},
         },
-        // 15 second timeout for requests
       }
     );
 
@@ -53,19 +36,13 @@ export class DuckDuckResearchServer {
     this.setupErrorHandling();
   }
 
-  /**
-   * Sets up handlers for the server's tools.
-   * Registers tool schemas and implements their execution logic.
-   *
-   * @private
-   */
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async (_request) => ({
       tools: [
         {
           name: "search_duckduckgo",
           description: "Search the web using DuckDuckGo",
-          inputSchema: SearchArgsSchema,
+          inputSchema: zodToJsonSchema(SearchArgsSchema) as any,
         },
         {
           name: "visit_page",
@@ -85,20 +62,32 @@ export class DuckDuckResearchServer {
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      console.log("CallToolRequestSchema handler started", request?.params?.name);
+      console.log("CallToolRequestSchema handler started", request?.params?.name, request?.params?.arguments);
+
+      if (!request?.params) {
+        console.error("CallToolRequestSchema: request params are undefined");
+        throw new McpError(ErrorCode.InvalidRequest, "Request params are undefined");
+      }
+
+      if (!request.params.name) {
+        console.error("CallToolRequestSchema: request params name is undefined");
+        throw new McpError(ErrorCode.InvalidRequest, "Request params name is undefined");
+      }
+
       try {
         switch (request.params.name) {
           case "search_duckduckgo": {
-            console.log("search_duckduckgo: parsing arguments");
+            console.log("search_duckduckgo: handler started");
+            console.log("search_duckduckgo: parsing arguments", request.params.arguments);
             const searchArgs = SearchArgsSchema.parse(request.params.arguments);
-            console.log("search_duckduckgo: arguments parsed");
+            console.log("search_duckduckgo: arguments parsed", searchArgs);
             if (!searchArgs) {
               throw new McpError(ErrorCode.InvalidParams, "Missing required parameters");
             }
 
-            console.log("search_duckduckgo: calling performSearch");
+            console.log("search_duckduckgo: calling performSearch", searchArgs);
             const response = await performSearch(searchArgs);
-            console.log("search_duckduckgo: performSearch returned");
+            console.log("search_duckduckgo: performSearch returned", response);
             return {
               content: [
                 {
@@ -110,18 +99,19 @@ export class DuckDuckResearchServer {
           }
 
           case "visit_page": {
-            console.log("visit_page: parsing arguments");
+            console.log("visit_page: handler started");
+            console.log("visit_page: parsing arguments", request.params.arguments);
             const { url } = VisitPageArgsSchema.parse(request.params.arguments);
-            console.log("visit_page: arguments parsed");
+            console.log("visit_page: arguments parsed", url);
             console.log("visit_page: calling browserManager.ensureBrowser");
             const page = await browserManager.ensureBrowser();
             console.log("visit_page: browserManager.ensureBrowser returned");
-            console.log("visit_page: calling browserManager.safePageNavigation");
+            console.log("visit_page: calling browserManager.safePageNavigation", url);
             await browserManager.safePageNavigation(page, url);
             console.log("visit_page: browserManager.safePageNavigation returned");
             console.log("visit_page: calling browserManager.extractContentAsMarkdown");
             const content = await browserManager.extractContentAsMarkdown(page);
-            console.log("visit_page: browserManager.extractContentAsMarkdown returned");
+            console.log("visit_page: browserManager.extractContentAsMarkdown returned", content);
 
             return {
               content: [
@@ -134,6 +124,7 @@ export class DuckDuckResearchServer {
           }
 
           case "take_screenshot": {
+            console.log("take_screenshot: handler started");
             console.log("take_screenshot: calling browserManager.ensureBrowser");
             const page = await browserManager.ensureBrowser();
             console.log("take_screenshot: browserManager.ensureBrowser returned");
@@ -152,10 +143,13 @@ export class DuckDuckResearchServer {
             };
           }
 
-          default:
+          default: {
+            console.log("call_tool: unknown tool", request.params.name);
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
+          }
         }
       } catch (error) {
+        console.error("call_tool: error", error);
         if (error instanceof McpError) {
           throw error;
         }
@@ -167,12 +161,6 @@ export class DuckDuckResearchServer {
     });
   }
 
-  /**
-   * Sets up error handling for the server.
-   * Configures error logging and cleanup on process termination.
-   *
-   * @private
-   */
   private setupErrorHandling() {
     this.server.onerror = (error: Error) => {
       console.error("[MCP Error]", error);
@@ -184,44 +172,17 @@ export class DuckDuckResearchServer {
     });
   }
 
-  /**
-   * Cleans up server resources, including browser instances.
-   * Should be called before server shutdown.
-   */
   async cleanup() {
     await browserManager.cleanup();
   }
 
-  /**
-   * Starts the server with stdio transport.
-   *
-   * @returns Promise that resolves when the server is running
-   *
-   * @example
-   * ```typescript
-   * const server = new DuckDuckResearchServer();
-   * await server.run();
-   * ```
-   */
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     console.error("DuckDuckResearch MCP server running on stdio");
   }
 
-  /**
-   * Gets the underlying MCP server instance.
-   * Primarily used for testing.
-   *
-   * @returns The MCP server instance
-   */
   getServer(): Server {
     return this.server;
   }
-}
-
-// Only start the server if this is the main module
-if (require.main === module) {
-  const server = new DuckDuckResearchServer();
-  server.run().catch(console.error);
 }

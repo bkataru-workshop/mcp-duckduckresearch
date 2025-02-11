@@ -74,10 +74,20 @@ export class BrowserManager {
    * ```
    */
   async ensureBrowser(): Promise<Page> {
+    console.log("ensureBrowser: started");
     if (!this.browser) {
-      this.browser = await chromium.launch({
-        headless: true,
-      });
+      console.log("ensureBrowser: launching browser");
+      try {
+        this.browser = await chromium.launch({
+          headless: true,
+        });
+        console.log("ensureBrowser: browser launched");
+      } catch (e) {
+        const error = new Error(`Browser launch failed: ${(e as Error).message}`);
+        console.error("ensureBrowser: Browser launch failed", error);
+        throw error;
+      }
+
       const context = await this.browser.newContext();
       this.page = await context.newPage();
     }
@@ -86,7 +96,7 @@ export class BrowserManager {
       const context = await this.browser.newContext();
       this.page = await context.newPage();
     }
-
+    console.log("ensureBrowser: finished");
     return this.page;
   }
 
@@ -96,11 +106,20 @@ export class BrowserManager {
    * @returns Promise that resolves when cleanup is complete
    */
   async cleanup(): Promise<void> {
+    console.log("cleanup: started");
     if (this.browser) {
-      await this.browser.close();
-      this.browser = undefined;
-      this.page = undefined;
+      try {
+        console.log("cleanup: closing browser");
+        await this.browser.close();
+        console.log("cleanup: browser closed");
+      } catch (e) {
+        console.error("cleanup: Error closing browser", e);
+      } finally {
+        this.browser = undefined;
+        this.page = undefined;
+      }
     }
+    console.log("cleanup: finished");
   }
 
   /**
@@ -118,36 +137,47 @@ export class BrowserManager {
    * ```
    */
   async safePageNavigation(page: Page, url: string): Promise<void> {
+    console.log("safePageNavigation: started", url);
     try {
       const context = await page.context();
       await context.addCookies([
         { name: "CONSENT", value: "YES+", domain: ".google.com", path: "/" },
       ]);
+      console.log("safePageNavigation: cookies added");
 
       // Initial navigation
+      console.log("safePageNavigation: navigating to url", url);
       const response = await page.goto(url, {
         waitUntil: "domcontentloaded",
         timeout: 15000,
       });
+      console.log("safePageNavigation: navigation response received", response?.status());
 
       if (!response) {
-        throw new Error("Navigation failed: no response received");
+        const error = new Error("Navigation failed: no response received");
+        console.error("safePageNavigation: Navigation failed", error);
+        throw error;
       }
 
       const status = response.status();
       if (status >= 400) {
-        throw new Error(`HTTP ${status}: ${response.statusText()}`);
+        const error = new Error(`HTTP ${status}: ${response.statusText()}`);
+        console.error("safePageNavigation: HTTP error", error);
+        throw error;
       }
 
       // Wait for network to become idle or timeout
+      console.log("safePageNavigation: waiting for network idle");
       await Promise.race([
         page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {
           /* ignore timeout */
         }),
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
+      console.log("safePageNavigation: network idle wait finished");
 
       // Security and content validation
+      console.log("safePageNavigation: running page evaluate");
       const validation = await page.evaluate(() => {
         const botProtectionExists = [
           "#challenge-running",
@@ -175,17 +205,24 @@ export class BrowserManager {
           title: document.title,
         };
       });
+      console.log("safePageNavigation: page evaluate finished", validation);
 
       if (validation.botProtection) {
-        throw new Error("Bot protection detected");
+        const error = new Error("Bot protection detected");
+        console.error("safePageNavigation: Bot protection detected", error);
+        throw error;
       }
 
       if (validation.suspiciousTitle) {
-        throw new Error("Suspicious page title detected");
+        const error = new Error("Suspicious page title detected");
+        console.error("safePageNavigation: Suspicious page title detected", error);
+        throw error;
       }
 
       if (validation.wordCount < 10) {
-        throw new Error("Page contains insufficient content");
+        const error = new Error("Page contains insufficient content");
+        console.error("safePageNavigation: Page contains insufficient content", error);
+        throw error;
       }
     } catch (error) {
       if (
@@ -196,8 +233,11 @@ export class BrowserManager {
       ) {
         throw error;
       }
-      throw new Error(`Navigation to ${url} failed`);
+      const navigationError = new Error(`Navigation to ${url} failed: ${(error as Error).message}`);
+      console.error("safePageNavigation: Navigation failed", navigationError);
+      throw navigationError;
     }
+    console.log("safePageNavigation: finished");
   }
 
   /**
@@ -217,71 +257,82 @@ export class BrowserManager {
    * ```
    */
   async extractContentAsMarkdown(page: Page, selector?: string): Promise<string> {
-    const html = await page.evaluate((sel) => {
-      if (sel) {
-        const element = document.querySelector(sel);
-        return element ? element.outerHTML : "";
-      }
-
-      const contentSelectors = [
-        "main",
-        "article",
-        '[role="main"]',
-        "#content",
-        ".content",
-        ".main",
-        ".post",
-        ".article",
-      ];
-
-      for (const contentSelector of contentSelectors) {
-        const element = document.querySelector(contentSelector);
-        if (element) {
-          return element.outerHTML;
-        }
-      }
-
-      const body = document.body;
-      const elementsToRemove = [
-        "header",
-        "footer",
-        "nav",
-        '[role="navigation"]',
-        "aside",
-        ".sidebar",
-        '[role="complementary"]',
-        ".nav",
-        ".menu",
-        ".header",
-        ".footer",
-        ".advertisement",
-        ".ads",
-        ".cookie-notice",
-      ];
-
-      for (const sel of elementsToRemove) {
-        for (const el of body.querySelectorAll(sel)) {
-          el.remove();
-        }
-      }
-
-      return body.outerHTML;
-    }, selector);
-
-    if (!html) {
-      return "";
-    }
-
+    console.log("extractContentAsMarkdown: started", selector);
     try {
-      const markdown = turndownService.turndown(html);
-      return markdown
-        .replace(/\n{3,}/g, "\n\n")
-        .replace(/^- $/gm, "")
-        .replace(/^\s+$/gm, "")
-        .trim();
-    } catch (error) {
-      console.error("Error converting HTML to Markdown:", error);
-      return html;
+      const html = await page.evaluate((sel) => {
+        if (sel) {
+          const element = document.querySelector(sel);
+          return element ? element.outerHTML : "";
+        }
+
+        const contentSelectors = [
+          "main",
+          "article",
+          '[role="main"]',
+          "#content",
+          ".content",
+          ".main",
+          ".post",
+          ".article",
+        ];
+
+        for (const contentSelector of contentSelectors) {
+          const element = document.querySelector(contentSelector);
+          if (element) {
+            return element.outerHTML;
+          }
+        }
+
+        const body = document.body;
+        const elementsToRemove = [
+          "header",
+          "footer",
+          "nav",
+          '[role="navigation"]',
+          "aside",
+          ".sidebar",
+          '[role="complementary"]',
+          ".nav",
+          ".menu",
+          ".header",
+          ".footer",
+          ".advertisement",
+          ".ads",
+          ".cookie-notice",
+        ];
+
+        for (const sel of elementsToRemove) {
+          for (const el of body.querySelectorAll(sel)) {
+            el.remove();
+          }
+        }
+
+        return body.outerHTML;
+      }, selector);
+
+      if (!html) {
+        console.log("extractContentAsMarkdown: html is empty");
+        return "";
+      }
+
+      try {
+        console.log("extractContentAsMarkdown: converting HTML to markdown");
+        const markdown = turndownService.turndown(html);
+        const processedMarkdown = markdown
+          .replace(/\n{3,}/g, "\n\n")
+          .replace(/^- $/gm, "")
+          .replace(/^\s+$/gm, "")
+          .trim();
+        console.log("extractContentAsMarkdown: finished", processedMarkdown);
+        return processedMarkdown;
+      } catch (error) {
+        console.error("extractContentAsMarkdown: Error converting HTML to Markdown:", error);
+        return html;
+      }
+    } catch (e) {
+      const error = new Error(`Content extraction failed: ${(e as Error).message}`);
+      console.error("extractContentAsMarkdown: Content extraction failed", error);
+      throw error;
     }
   }
 
@@ -299,14 +350,17 @@ export class BrowserManager {
    * ```
    */
   async takeScreenshotWithSizeLimit(page: Page): Promise<string> {
+    console.log("takeScreenshotWithSizeLimit: started");
     const MAX_DIMENSION = 1920;
     const MIN_DIMENSION = 800;
 
+    console.log("takeScreenshotWithSizeLimit: setting viewport size 1600x900");
     await page.setViewportSize({
       width: 1600,
       height: 900,
     });
 
+    console.log("takeScreenshotWithSizeLimit: taking screenshot attempt 1");
     let screenshot = await page.screenshot({
       type: "png",
       fullPage: false,
@@ -316,27 +370,29 @@ export class BrowserManager {
     const MAX_ATTEMPTS = 3;
 
     while (screenshot.length > 5 * 1024 * 1024 && attempts < MAX_ATTEMPTS) {
-      const scaleFactor = 0.75 ** (attempts + 1);
+      attempts++;
+      const scaleFactor = 0.75 ** attempts;
       const newWidth = Math.round(1600 * scaleFactor);
       let newHeight = Math.round(900 * scaleFactor);
 
       // Ensure dimensions stay within bounds  newWidth = Math.max(MIN_DIMENSION, Math.min(MAX_DIMENSION, newWidth));
       newHeight = Math.max(MIN_DIMENSION, Math.min(MAX_DIMENSION, newHeight));
 
+      console.log(`takeScreenshotWithSizeLimit: reducing viewport size to ${newWidth}x${newHeight}, attempt ${attempts}`);
       await page.setViewportSize({
         width: newWidth,
         height: newHeight,
       });
 
+      console.log(`takeScreenshotWithSizeLimit: taking screenshot attempt ${attempts + 1}`);
       screenshot = await page.screenshot({
         type: "png",
         fullPage: false,
       });
-
-      attempts++;
     }
 
     if (screenshot.length > 5 * 1024 * 1024) {
+      console.log("takeScreenshotWithSizeLimit: screenshot still too large, reducing to minimum dimensions");
       await page.setViewportSize({
         width: MIN_DIMENSION,
         height: MIN_DIMENSION,
@@ -348,10 +404,12 @@ export class BrowserManager {
       });
 
       if (screenshot.length > 5 * 1024 * 1024) {
-        throw new Error("Failed to reduce screenshot to under 5MB even with minimum settings");
+        const error = new Error("Failed to reduce screenshot to under 5MB even with minimum settings");
+        console.error("takeScreenshotWithSizeLimit: Failed to reduce screenshot size", error);
+        throw error;
       }
     }
-
+    console.log("takeScreenshotWithSizeLimit: finished");
     return screenshot.toString("base64");
   }
 }
