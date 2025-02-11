@@ -179,7 +179,6 @@ export class DuckDuckResearchServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("DuckDuckResearch MCP server running on stdio");
   }
 
   getServer(): Server {
