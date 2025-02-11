@@ -14,5 +14,5 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*", "tests/**/*"],
-  "exclude": ["node_modules", "build"]
+  "exclude": ["node_modules", "build", "duck-duck-mcp", "mcp-webresearch"]
 }

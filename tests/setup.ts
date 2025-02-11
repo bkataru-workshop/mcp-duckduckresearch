@@ -1,5 +1,5 @@
+import { type Browser, chromium } from "playwright";
 import { afterAll, beforeAll } from "vitest";
-import { chromium, Browser } from "playwright";
 
 let browser: Browser;
 

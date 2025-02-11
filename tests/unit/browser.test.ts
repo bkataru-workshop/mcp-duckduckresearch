@@ -1,9 +1,8 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { type Browser, type BrowserContext, type Page, chromium } from "playwright";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import { browserManager } from "../../src/browser.js";
-import { Browser, Page, chromium } from "playwright";
-import { Mock } from "vitest";
 
-// Mock Playwright
 vi.mock("playwright", () => ({
   chromium: {
     launch: vi.fn(),
@@ -11,15 +10,14 @@ vi.mock("playwright", () => ({
 }));
 
 describe("browserManager", () => {
-  let mockBrowser: any;
-  let mockContext: any;
-  let mockPage: any;
+  let mockBrowser: Browser;
+  let mockContext: BrowserContext;
+  let mockPage: Page;
   let launchMock: Mock;
 
   beforeEach(() => {
     // Reset browser state
-    (browserManager as any).browser = undefined;
-    (browserManager as any).page = undefined;
+    browserManager.resetBrowser();
 
     // Setup mock browser hierarchy
     mockPage = {
@@ -28,20 +26,25 @@ describe("browserManager", () => {
       evaluate: vi.fn(),
       setViewportSize: vi.fn(),
       screenshot: vi.fn(),
-    };
+      context: vi.fn(),
+    } as unknown as Page;
 
     mockContext = {
       newPage: vi.fn().mockResolvedValue(mockPage),
       addCookies: vi.fn(),
-    };
+    } as unknown as BrowserContext;
 
     mockBrowser = {
       newContext: vi.fn().mockResolvedValue(mockContext),
       close: vi.fn(),
-    };
+    } as unknown as Browser;
 
     launchMock = chromium.launch as Mock;
     launchMock.mockResolvedValue(mockBrowser);
+
+    // Ensure the mock of page.context returns the mocked context
+    (mockPage.context as Mock).mockReturnValue(mockContext);
+    (mockPage.waitForLoadState as Mock).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -62,13 +65,13 @@ describe("browserManager", () => {
       // First call creates everything
       await browserManager.ensureBrowser();
       launchMock.mockClear();
-      mockBrowser.newContext.mockClear();
+      (mockBrowser.newContext as Mock).mockClear();
 
-      // Reset page but keep browser
+      // Reset just the page but keep browser
       (browserManager as any).page = undefined;
 
       // Second call should only create new page
-      await browserManager.ensureBrowser();
+      const page = await browserManager.ensureBrowser();
 
       expect(launchMock).not.toHaveBeenCalled();
       expect(mockBrowser.newContext).toHaveBeenCalled();
@@ -77,141 +80,132 @@ describe("browserManager", () => {
   });
 
   describe("safePageNavigation", () => {
-    beforeEach(async () => {
-      await browserManager.ensureBrowser();
-    });
-
     it("should navigate successfully with proper response", async () => {
-      const mockResponse = {
-        status: vi.fn().mockReturnValue(200),
-        statusText: vi.fn().mockReturnValue("OK"),
-      };
+      (mockPage.goto as Mock).mockResolvedValue({
+        status: () => 200,
+        statusText: () => "OK",
+      });
 
-      mockPage.goto.mockResolvedValue(mockResponse);
-      mockPage.evaluate.mockResolvedValue({
+      (mockPage.evaluate as Mock).mockResolvedValue({
         wordCount: 100,
         botProtection: false,
         suspiciousTitle: false,
         title: "Test Page",
       });
 
-      await expect(
-        browserManager.safePageNavigation(mockPage, "https://example.com")
-      ).resolves.not.toThrow();
+      await browserManager.safePageNavigation(mockPage, "https://example.com");
 
       expect(mockContext.addCookies).toHaveBeenCalled();
       expect(mockPage.goto).toHaveBeenCalledWith(
         "https://example.com",
-        expect.any(Object)
+        expect.objectContaining({
+          waitUntil: "domcontentloaded",
+          timeout: 15000,
+        })
       );
+      expect(mockPage.waitForLoadState).toHaveBeenCalledWith("networkidle", expect.any(Object));
     });
 
     it("should throw on bot protection detection", async () => {
-      mockPage.goto.mockResolvedValue({ status: () => 200 });
-      mockPage.evaluate.mockResolvedValue({
+      (mockPage.goto as Mock).mockResolvedValue({
+        status: () => 200,
+        statusText: () => "OK",
+      });
+
+      (mockPage.evaluate as Mock).mockResolvedValue({
         wordCount: 100,
         botProtection: true,
         suspiciousTitle: false,
         title: "Test Page",
       });
 
-      await expect(
+      await expect(() =>
         browserManager.safePageNavigation(mockPage, "https://example.com")
       ).rejects.toThrow("Bot protection detected");
     });
 
     it("should throw on suspicious title", async () => {
-      mockPage.goto.mockResolvedValue({ status: () => 200 });
-      mockPage.evaluate.mockResolvedValue({
+      (mockPage.goto as Mock).mockResolvedValue({
+        status: () => 200,
+        statusText: () => "OK",
+      });
+
+      (mockPage.evaluate as Mock).mockResolvedValue({
         wordCount: 100,
         botProtection: false,
         suspiciousTitle: true,
-        title: "Security Check",
+        title: "Test Page",
       });
 
-      await expect(
+      await expect(() =>
         browserManager.safePageNavigation(mockPage, "https://example.com")
       ).rejects.toThrow("Suspicious page title detected");
     });
 
     it("should throw on insufficient content", async () => {
-      mockPage.goto.mockResolvedValue({ status: () => 200 });
-      mockPage.evaluate.mockResolvedValue({
+      (mockPage.goto as Mock).mockResolvedValue({
+        status: () => 200,
+        statusText: () => "OK",
+      });
+
+      (mockPage.evaluate as Mock).mockResolvedValue({
         wordCount: 5,
         botProtection: false,
         suspiciousTitle: false,
         title: "Test Page",
       });
 
-      await expect(
+      await expect(() =>
         browserManager.safePageNavigation(mockPage, "https://example.com")
       ).rejects.toThrow("Page contains insufficient content");
     });
   });
 
   describe("extractContentAsMarkdown", () => {
-    beforeEach(async () => {
-      await browserManager.ensureBrowser();
-    });
-
     it("should extract content from main element", async () => {
-      const mockHtml = "<main><h1>Test</h1><p>Content</p></main>";
-      mockPage.evaluate.mockResolvedValue(mockHtml);
-
+      (mockPage.evaluate as Mock).mockResolvedValue("<main><h1>Test</h1><p>Content</p></main>");
       const markdown = await browserManager.extractContentAsMarkdown(mockPage);
       expect(markdown).toContain("# Test");
       expect(markdown).toContain("Content");
     });
 
     it("should extract content from specific selector", async () => {
-      const mockHtml = "<div><h1>Test</h1><p>Content</p></div>";
-      mockPage.evaluate.mockResolvedValue(mockHtml);
-
-      const markdown = await browserManager.extractContentAsMarkdown(
-        mockPage,
-        "#content"
-      );
+      (mockPage.evaluate as Mock).mockResolvedValue("<div><h1>Test</h1><p>Content</p></div>");
+      const markdown = await browserManager.extractContentAsMarkdown(mockPage, "#content");
       expect(markdown).toContain("# Test");
       expect(markdown).toContain("Content");
     });
 
     it("should handle empty content", async () => {
-      mockPage.evaluate.mockResolvedValue("");
+      (mockPage.evaluate as Mock).mockResolvedValue("");
       const markdown = await browserManager.extractContentAsMarkdown(mockPage);
       expect(markdown).toBe("");
     });
   });
 
   describe("takeScreenshotWithSizeLimit", () => {
-    beforeEach(async () => {
-      await browserManager.ensureBrowser();
-    });
-
     it("should take screenshot with default viewport", async () => {
       const mockScreenshot = Buffer.from("test-screenshot");
-      mockPage.screenshot.mockResolvedValue(mockScreenshot);
+      (mockPage.screenshot as Mock).mockResolvedValue(mockScreenshot);
+      (mockPage.setViewportSize as Mock).mockImplementation(() => {});
 
       const result = await browserManager.takeScreenshotWithSizeLimit(mockPage);
+
+      expect(mockPage.setViewportSize).toHaveBeenCalledWith({ width: 1600, height: 900 });
       expect(result).toBe(mockScreenshot.toString("base64"));
-      expect(mockPage.setViewportSize).toHaveBeenCalledWith({
-        width: 1600,
-        height: 900,
-      });
     });
 
     it("should reduce viewport size for large screenshots", async () => {
-      // First screenshot is too large
       const largeScreenshot = Buffer.alloc(6 * 1024 * 1024);
       const smallScreenshot = Buffer.from("small-screenshot");
-      
-      mockPage.screenshot
+
+      (mockPage.screenshot as Mock)
         .mockResolvedValueOnce(largeScreenshot)
         .mockResolvedValueOnce(smallScreenshot);
-      
-      mockPage.viewportSize = { width: 1600, height: 900 };
+      (mockPage.setViewportSize as Mock).mockImplementation(() => {});
 
       const result = await browserManager.takeScreenshotWithSizeLimit(mockPage);
-      
+
       expect(mockPage.setViewportSize).toHaveBeenCalledTimes(2);
       expect(result).toBe(smallScreenshot.toString("base64"));
     });
@@ -223,8 +217,9 @@ describe("browserManager", () => {
       await browserManager.cleanup();
 
       expect(mockBrowser.close).toHaveBeenCalled();
-      expect((browserManager as any).browser).toBeUndefined();
-      expect((browserManager as any).page).toBeUndefined();
+      const internalState = browserManager as unknown as { browser?: Browser; page?: Page };
+      expect(internalState.browser).toBeUndefined();
+      expect(internalState.page).toBeUndefined();
     });
 
     it("should handle cleanup when no browser exists", async () => {

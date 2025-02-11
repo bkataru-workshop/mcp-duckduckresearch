@@ -3,11 +3,11 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
-  ListToolsRequestSchema,
   CallToolResultSchema,
-  ListToolsResultSchema,
+  ErrorCode,
   JSONRPCRequest,
-  ErrorCode
+  ListToolsRequestSchema,
+  ListToolsResultSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { browserManager } from "./browser.js";
 import { performSearch } from "./search.js";
@@ -21,7 +21,7 @@ import { McpError } from "@modelcontextprotocol/sdk/types.js";
  * - search_duckduckgo: Search using DuckDuckGo
  * - visit_page: Visit and extract content from a webpage
  * - take_screenshot: Take a screenshot of the current page
- * 
+ *
  * @example
  * ```typescript
  * const server = new DuckDuckResearchServer();
@@ -45,6 +45,7 @@ export class DuckDuckResearchServer {
         capabilities: {
           tools: {},
         },
+        // 15 second timeout for requests
       }
     );
 
@@ -55,11 +56,11 @@ export class DuckDuckResearchServer {
   /**
    * Sets up handlers for the server's tools.
    * Registers tool schemas and implements their execution logic.
-   * 
+   *
    * @private
    */
   private setupToolHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async (request) => ({
+    this.server.setRequestHandler(ListToolsRequestSchema, async (_request) => ({
       tools: [
         {
           name: "search_duckduckgo",
@@ -83,82 +84,93 @@ export class DuckDuckResearchServer {
       ],
     }));
 
-    this.server.setRequestHandler(
-      CallToolRequestSchema,
-      async (request) => {
-        try {
-          switch (request.params.name) {
-            case "search_duckduckgo": {
-              const searchArgs = SearchArgsSchema.parse(request.params.arguments);
-              if (!searchArgs) {
-                throw new McpError(ErrorCode.InvalidParams, "Missing required parameters");
-              }
-              
-              const response = await performSearch(searchArgs);
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify(response, null, 2),
-                  },
-                ],
-              };
+    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      console.log("CallToolRequestSchema handler started", request?.params?.name);
+      try {
+        switch (request.params.name) {
+          case "search_duckduckgo": {
+            console.log("search_duckduckgo: parsing arguments");
+            const searchArgs = SearchArgsSchema.parse(request.params.arguments);
+            console.log("search_duckduckgo: arguments parsed");
+            if (!searchArgs) {
+              throw new McpError(ErrorCode.InvalidParams, "Missing required parameters");
             }
 
-            case "visit_page": {
-              const { url } = VisitPageArgsSchema.parse(request.params.arguments);
-              const page = await browserManager.ensureBrowser();
-              await browserManager.safePageNavigation(page, url);
-              const content = await browserManager.extractContentAsMarkdown(page);
-
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: content,
-                  },
-                ],
-              };
-            }
-
-            case "take_screenshot": {
-              const page = await browserManager.ensureBrowser();
-              const screenshot = await browserManager.takeScreenshotWithSizeLimit(page);
-
-              return {
-                content: [
-                  {
-                    type: "image",
-                    mediaType: "image/png",
-                    data: screenshot,
-                  },
-                ],
-              };
-            }
-
-            default:
-              throw new McpError(
-                ErrorCode.MethodNotFound,
-                `Unknown tool: ${request.params.name}`
-              );
+            console.log("search_duckduckgo: calling performSearch");
+            const response = await performSearch(searchArgs);
+            console.log("search_duckduckgo: performSearch returned");
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(response, null, 2),
+                },
+              ],
+            };
           }
-        } catch (error) {
-          if (error instanceof McpError) {
-            throw error;
+
+          case "visit_page": {
+            console.log("visit_page: parsing arguments");
+            const { url } = VisitPageArgsSchema.parse(request.params.arguments);
+            console.log("visit_page: arguments parsed");
+            console.log("visit_page: calling browserManager.ensureBrowser");
+            const page = await browserManager.ensureBrowser();
+            console.log("visit_page: browserManager.ensureBrowser returned");
+            console.log("visit_page: calling browserManager.safePageNavigation");
+            await browserManager.safePageNavigation(page, url);
+            console.log("visit_page: browserManager.safePageNavigation returned");
+            console.log("visit_page: calling browserManager.extractContentAsMarkdown");
+            const content = await browserManager.extractContentAsMarkdown(page);
+            console.log("visit_page: browserManager.extractContentAsMarkdown returned");
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: content,
+                },
+              ],
+            };
           }
-          throw new McpError(
-            ErrorCode.InternalError,
-            `Tool execution failed: ${(error as Error).message}`
-          );
+
+          case "take_screenshot": {
+            console.log("take_screenshot: calling browserManager.ensureBrowser");
+            const page = await browserManager.ensureBrowser();
+            console.log("take_screenshot: browserManager.ensureBrowser returned");
+            console.log("take_screenshot: calling browserManager.takeScreenshotWithSizeLimit");
+            const screenshot = await browserManager.takeScreenshotWithSizeLimit(page);
+            console.log("take_screenshot: browserManager.takeScreenshotWithSizeLimit returned");
+
+            return {
+              content: [
+                {
+                  type: "image",
+                  mediaType: "image/png",
+                  data: screenshot,
+                },
+              ],
+            };
+          }
+
+          default:
+            throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
         }
+      } catch (error) {
+        if (error instanceof McpError) {
+          throw error;
+        }
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Tool execution failed: ${(error as Error).message}`
+        );
       }
-    );
+    });
   }
 
   /**
    * Sets up error handling for the server.
    * Configures error logging and cleanup on process termination.
-   * 
+   *
    * @private
    */
   private setupErrorHandling() {
@@ -182,9 +194,9 @@ export class DuckDuckResearchServer {
 
   /**
    * Starts the server with stdio transport.
-   * 
+   *
    * @returns Promise that resolves when the server is running
-   * 
+   *
    * @example
    * ```typescript
    * const server = new DuckDuckResearchServer();
@@ -200,7 +212,7 @@ export class DuckDuckResearchServer {
   /**
    * Gets the underlying MCP server instance.
    * Primarily used for testing.
-   * 
+   *
    * @returns The MCP server instance
    */
   getServer(): Server {

@@ -1,16 +1,18 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import {
-  isValidUrl,
-  withRetry,
-  saveScreenshot,
-  cleanupScreenshots,
-  MAX_SCREENSHOT_SIZE,
-  SCREENSHOTS_DIR,
-} from "../../src/utils.js";
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from "node:fs";
+import type { PathLike } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { PathLike } from "fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  MAX_SCREENSHOT_SIZE,
+  RETRY_DELAY,
+  SCREENSHOTS_DIR,
+  cleanupScreenshots,
+  isValidUrl,
+  saveScreenshot,
+  withRetry,
+} from "../../src/utils.js";
 
 describe("utils", () => {
   describe("isValidUrl", () => {
@@ -63,11 +65,18 @@ describe("utils", () => {
 
     it("should throw after max retries", async () => {
       const operation = vi.fn().mockRejectedValue(new Error("persistent failure"));
-
-      const promise = withRetry(operation, 3);
-      await vi.runAllTimersAsync();
-
-      await expect(promise).rejects.toThrow("persistent failure");
+      
+      const retryPromise = withRetry(operation, 3);
+      // First attempt happens immediately
+      expect(operation).toHaveBeenCalledTimes(1);
+      
+      // Run subsequent retry attempts
+      for (let i = 1; i < 3; i++) {
+        await vi.advanceTimersByTimeAsync(RETRY_DELAY);
+        expect(operation).toHaveBeenCalledTimes(i + 1);
+      }
+      
+      await expect(retryPromise).rejects.toThrow("persistent failure");
       expect(operation).toHaveBeenCalledTimes(3);
     });
   });
@@ -78,9 +87,9 @@ describe("utils", () => {
 
     beforeEach(() => {
       vi.spyOn(fs.promises, "writeFile").mockResolvedValue(undefined);
-      
+
       // Mock readdir with proper type overloads
-      const mockReaddir = vi.fn((path: PathLike, options?: { withFileTypes?: boolean }) => {
+      const mockReaddir = vi.fn((_path: PathLike, options?: { withFileTypes?: boolean }) => {
         if (options?.withFileTypes) {
           const dirent = {
             name: "test.png",
@@ -109,9 +118,16 @@ describe("utils", () => {
     describe("saveScreenshot", () => {
       it("should save valid screenshots", async () => {
         const filepath = await saveScreenshot(mockScreenshot, mockTitle);
+
+        // Verify basic path properties
         expect(filepath).toContain(SCREENSHOTS_DIR);
-        expect(filepath).toContain("test-page");
         expect(filepath).toMatch(/\.png$/);
+
+        // Extract and verify filename
+        const filename = path.basename(filepath);
+        expect(filename).toMatch(/^test_page-\d+\.png$/);
+
+        // Verify writeFile was called
         expect(fs.promises.writeFile).toHaveBeenCalled();
       });
 
@@ -122,8 +138,9 @@ describe("utils", () => {
 
       it("should sanitize filenames", async () => {
         const filepath = await saveScreenshot(mockScreenshot, "Test Page! @#$%");
-        expect(filepath).toMatch(/test_page_/);
-        expect(filepath).toMatch(/\.png$/);
+        const filename = path.basename(filepath);
+        // Allow multiple underscores between words and timestamp
+        expect(filename).toMatch(/^test_page[_]+-\d+\.png$/);
       });
     });
 

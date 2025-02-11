@@ -1,5 +1,5 @@
-import { z } from "zod";
 import { SafeSearchType } from "duck-duck-scrape";
+import { z } from "zod";
 
 /**
  * Schema for search tool arguments
@@ -20,7 +20,8 @@ export const SearchArgsSchema = z.object({
   options: z
     .object({
       region: z.string().default("zh-cn").describe("Search region"),
-      safeSearch: z.nativeEnum(SafeSearchType)
+      safeSearch: z
+        .nativeEnum(SafeSearchType)
         .default(SafeSearchType.MODERATE)
         .describe("Safe search level"),
       numResults: z.number().default(50).describe("Number of results to return"),

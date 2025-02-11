@@ -1,7 +1,12 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { performSearch } from "../../src/search.js";
-import { search, SafeSearchType } from "duck-duck-scrape";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { SafeSearchType, search } from "duck-duck-scrape";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
+import { performSearch } from "../../src/search.js";
+import type { SearchArgs } from "../../src/types.js";
+
+// Create a typed mock for search
+const mockSearch = search as unknown as Mock<typeof search>;
 
 // Mock duck-duck-scrape
 vi.mock("duck-duck-scrape", () => ({
@@ -24,22 +29,33 @@ describe("search", () => {
         title: "Test Result 1",
         url: "https://docs.example.com/guide",
         description: "A test result description",
+        hostname: "docs.example.com",
+        rawDescription: "A test result description",
+        icon: "",
       },
       {
         title: "GitHub - Example/Project",
         url: "https://github.com/example/project",
         description: "A GitHub repository",
+        hostname: "github.com",
+        rawDescription: "A GitHub repository",
+        icon: "",
       },
       {
         title: "Social Media Post",
         url: "https://twitter.com/user/status/123",
         description: "A social media post",
+        hostname: "twitter.com",
+        rawDescription: "A social media post",
+        icon: "",
       },
     ],
+    noResults: false,
+    vqd: "3-0",
   };
 
   it("should perform search with default options", async () => {
-    (search as any).mockResolvedValue(mockSearchResult);
+    mockSearch.mockResolvedValue(mockSearchResult);
 
     const result = await performSearch({
       query: "test query",
@@ -62,7 +78,7 @@ describe("search", () => {
   });
 
   it("should perform search with custom options", async () => {
-    (search as any).mockResolvedValue(mockSearchResult);
+    mockSearch.mockResolvedValue(mockSearchResult);
 
     const result = await performSearch({
       query: "test query",
@@ -87,7 +103,7 @@ describe("search", () => {
   });
 
   it("should detect content types correctly", async () => {
-    (search as any).mockResolvedValue(mockSearchResult);
+    mockSearch.mockResolvedValue(mockSearchResult);
 
     const result = await performSearch({ query: "test query" });
 
@@ -97,7 +113,7 @@ describe("search", () => {
   });
 
   it("should handle search errors", async () => {
-    (search as any).mockRejectedValue(new Error("Search failed"));
+    mockSearch.mockRejectedValue(new Error("Search failed"));
 
     await expect(performSearch({ query: "test query" })).rejects.toThrow();
   });
@@ -109,12 +125,12 @@ describe("search", () => {
         options: {
           numResults: -1,
         },
-      } as any)
+      } as unknown as SearchArgs)
     ).rejects.toThrow();
   });
 
   it("should detect language based on query", async () => {
-    (search as any).mockResolvedValue(mockSearchResult);
+    mockSearch.mockResolvedValue(mockSearchResult);
 
     // English query
     let result = await performSearch({ query: "test query" });
@@ -126,19 +142,27 @@ describe("search", () => {
   });
 
   it("should detect topics from results", async () => {
-    (search as any).mockResolvedValue({
+    mockSearch.mockResolvedValue({
       results: [
         {
           title: "GitHub - Project",
           url: "https://github.com/example",
           description: "A project",
+          hostname: "github.com",
+          rawDescription: "A project",
+          icon: "",
         },
         {
           title: "Documentation",
           url: "https://docs.example.com",
           description: "Some docs",
+          hostname: "docs.example.com",
+          rawDescription: "Some docs",
+          icon: "",
         },
       ],
+      noResults: false,
+      vqd: "3-0",
     });
 
     const result = await performSearch({ query: "test query" });

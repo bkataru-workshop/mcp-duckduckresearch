@@ -1,4 +1,4 @@
-import { chromium, Browser, Page } from "playwright";
+import { type Browser, type Page, chromium } from "playwright";
 import TurndownService from "turndown";
 import type { Node } from "turndown";
 import { withRetry } from "./utils.js";
@@ -33,7 +33,7 @@ turndownService.addRule("preserveLinks", {
 
 turndownService.addRule("preserveImages", {
   filter: "img",
-  replacement: (content: string, node: Node) => {
+  replacement: (_content: string, node: Node) => {
     const element = node as HTMLImageElement;
     const alt = element.getAttribute("alt") || "";
     const src = element.getAttribute("src");
@@ -50,11 +50,24 @@ export class BrowserManager {
   private page?: Page;
 
   /**
+   * Resets the browser and page instances for testing purposes.
+   *
+   * @example
+   * ```typescript
+   * browserManager.resetBrowser();
+   * ```
+   */
+  resetBrowser(): void {
+    this.browser = undefined;
+    this.page = undefined;
+  }
+
+  /**
    * Ensures a browser instance and page are available.
    * Creates new ones if they don't exist.
-   * 
+   *
    * @returns Promise resolving to a Page instance
-   * 
+   *
    * @example
    * ```typescript
    * const page = await browserManager.ensureBrowser();
@@ -79,7 +92,7 @@ export class BrowserManager {
 
   /**
    * Cleans up browser resources by closing the browser instance.
-   * 
+   *
    * @returns Promise that resolves when cleanup is complete
    */
   async cleanup(): Promise<void> {
@@ -93,11 +106,11 @@ export class BrowserManager {
   /**
    * Safely navigates to a URL with comprehensive validation and security checks.
    * Handles common anti-bot measures and validates page content.
-   * 
+   *
    * @param page - Playwright Page instance
    * @param url - URL to navigate to
    * @throws {Error} If navigation fails, bot protection is detected, or content is invalid
-   * 
+   *
    * @example
    * ```typescript
    * const page = await browserManager.ensureBrowser();
@@ -106,14 +119,9 @@ export class BrowserManager {
    */
   async safePageNavigation(page: Page, url: string): Promise<void> {
     try {
-      // Set cookies to bypass consent banner
-      await page.context().addCookies([
-        {
-          name: "CONSENT",
-          value: "YES+",
-          domain: ".google.com",
-          path: "/",
-        },
+      const context = await page.context();
+      await context.addCookies([
+        { name: "CONSENT", value: "YES+", domain: ".google.com", path: "/" },
       ]);
 
       // Initial navigation
@@ -173,25 +181,33 @@ export class BrowserManager {
       }
 
       if (validation.suspiciousTitle) {
-        throw new Error(`Suspicious page title detected: "${validation.title}"`);
+        throw new Error("Suspicious page title detected");
       }
 
       if (validation.wordCount < 10) {
         throw new Error("Page contains insufficient content");
       }
     } catch (error) {
-      throw new Error(`Navigation to ${url} failed: ${(error as Error).message}`);
+      if (
+        error instanceof Error &&
+        (error.message.includes("Bot protection") ||
+          error.message.includes("Suspicious page title") ||
+          error.message.includes("insufficient content"))
+      ) {
+        throw error;
+      }
+      throw new Error(`Navigation to ${url} failed`);
     }
   }
 
   /**
    * Extracts content from a webpage and converts it to Markdown format.
    * Attempts to find main content area using common selectors.
-   * 
+   *
    * @param page - Playwright Page instance
    * @param selector - Optional CSS selector to target specific content
    * @returns Promise resolving to Markdown content
-   * 
+   *
    * @example
    * ```typescript
    * const content = await browserManager.extractContentAsMarkdown(
@@ -243,9 +259,11 @@ export class BrowserManager {
         ".cookie-notice",
       ];
 
-      elementsToRemove.forEach((sel) => {
-        body.querySelectorAll(sel).forEach((el) => el.remove());
-      });
+      for (const sel of elementsToRemove) {
+        for (const el of body.querySelectorAll(sel)) {
+          el.remove();
+        }
+      }
 
       return body.outerHTML;
     }, selector);
@@ -270,11 +288,11 @@ export class BrowserManager {
   /**
    * Takes a screenshot of the current page with automatic size optimization.
    * Reduces viewport size if screenshot exceeds size limit.
-   * 
+   *
    * @param page - Playwright Page instance
    * @returns Promise resolving to base64 encoded screenshot
    * @throws {Error} If screenshot can't be reduced to under size limit
-   * 
+   *
    * @example
    * ```typescript
    * const screenshot = await browserManager.takeScreenshotWithSizeLimit(page);
@@ -298,14 +316,11 @@ export class BrowserManager {
     const MAX_ATTEMPTS = 3;
 
     while (screenshot.length > 5 * 1024 * 1024 && attempts < MAX_ATTEMPTS) {
-      const viewport = page.viewportSize();
-      if (!viewport) continue;
+      const scaleFactor = 0.75 ** (attempts + 1);
+      const newWidth = Math.round(1600 * scaleFactor);
+      let newHeight = Math.round(900 * scaleFactor);
 
-      const scaleFactor = Math.pow(0.75, attempts + 1);
-      let newWidth = Math.round(viewport.width * scaleFactor);
-      let newHeight = Math.round(viewport.height * scaleFactor);
-
-      newWidth = Math.max(MIN_DIMENSION, Math.min(MAX_DIMENSION, newWidth));
+      // Ensure dimensions stay within bounds  newWidth = Math.max(MIN_DIMENSION, Math.min(MAX_DIMENSION, newWidth));
       newHeight = Math.max(MIN_DIMENSION, Math.min(MAX_DIMENSION, newHeight));
 
       await page.setViewportSize({
