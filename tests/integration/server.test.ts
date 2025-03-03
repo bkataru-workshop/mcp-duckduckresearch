@@ -48,17 +48,39 @@ class TestTransport {
   async sendMessage(message: JSONRPCMessage): Promise<void> {
     console.log("TestTransport.sendMessage: sending message", message);
     if (!this.connected) {
+      console.error("TestTransport.sendMessage: transport not connected");
       throw new Error('Transport not connected');
     }
 
-    if (this.pair && this.pair.adapter && this.pair.adapter.onmessage) { // Use adapter.onmessage
-      this.pair.adapter.onmessage(message);
+    if (!this.pair) {
+      console.error("TestTransport.sendMessage: no paired transport");
+      throw new Error('No paired transport');
     }
-    console.log("TestTransport.sendMessage: message sent");
+
+    if (!this.pair.adapter) {
+      console.error("TestTransport.sendMessage: no adapter on paired transport");
+      throw new Error('No adapter on paired transport');
+    }
+
+    if (!this.pair.adapter.onmessage) {
+      console.error("TestTransport.sendMessage: no onmessage handler on paired adapter");
+      throw new Error('No onmessage handler on paired adapter');
+    }
+
+    console.log("TestTransport.sendMessage: calling onmessage on paired adapter");
+    await new Promise<void>((resolve) => {
+      this.pair!.adapter!.onmessage(message);
+      resolve();
+    });
+    console.log("TestTransport.sendMessage: message delivered");
   }
 
   async initialize(): Promise<void> {
     console.log("TestTransport.initialize: initializing");
+    if (this.connected) {
+      console.warn("TestTransport.initialize: already connected");
+      return;
+    }
     this.connected = true;
     console.log("TestTransport.initialize: initialized");
   }
@@ -116,31 +138,77 @@ describe("DuckDuckResearch Server", () => {
   let transport: TestTransport;
 
   beforeEach(async () => {
+    console.log("Test setup: starting");
     server = new DuckDuckResearchServer();
     const mcpServer = server.getServer();
 
-    // Initialize test transports
+    console.log("Test setup: creating transports");
     const clientTransport = new TestTransport();
     const serverTransport = new TestTransport();
 
-    // Set up bidirectional communication
+    console.log("Test setup: linking transports");
     clientTransport.link(serverTransport);
     serverTransport.link(clientTransport);
 
-    // Create adapter for server transport
+    console.log("Test setup: creating transport adapters");
     const serverAdapter = new TransportAdapter(serverTransport);
-    const clientAdapter = new TransportAdapter(clientTransport); // Create client adapter
+    const clientAdapter = new TransportAdapter(clientTransport);
 
-    // Start transports and connect server
-    await Promise.all([
-      clientTransport.initialize(),
-      serverTransport.initialize(),
-    ]);
+    console.log("Test setup: initializing transports");
+    await clientTransport.initialize();
+    await serverTransport.initialize();
 
-    serverTransport.adapter = serverAdapter; // Set adapter on server transport
-    clientTransport.adapter = clientAdapter; // Set adapter on client transport
-    mcpServer.connect(serverAdapter);
+    console.log("Test setup: connecting server");
+    await mcpServer.connect(serverAdapter);
+    
+    console.log("Test setup: verifying connection");
+    if (!(mcpServer as any)._transport) {
+      throw new Error("Server failed to establish transport connection");
+    }
+
+    // Set transport first
     transport = clientTransport;
+
+    // Send initialization sequence
+    console.log("Test setup: sending initialization sequence");
+    const initResponse = await sendRequest({
+      jsonrpc: "2.0",
+      id: "init",
+      method: "initialize",
+      params: {
+        protocolVersion: "1.0",
+        clientInfo: {
+          name: "test-client",
+          version: "1.0.0"
+        },
+        capabilities: {
+          tools: {
+            listTools: true,
+            callTools: true
+          }
+        }
+      }
+    });
+
+    // Send initialized notification
+    console.log("Test setup: sending initialized notification");
+    await clientTransport.sendMessage({
+      jsonrpc: "2.0",
+      method: "initialized",
+      params: {}
+    });
+
+    // Wait for initialization response
+    if (!('result' in initResponse)) {
+      throw new Error('Failed to initialize server');
+    }
+
+    console.log("Test setup: initialization successful");
+
+    // Wait a bit for initialization to complete
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    console.log("Test setup: complete");
   });
 
   afterEach(async () => {
@@ -148,21 +216,32 @@ describe("DuckDuckResearch Server", () => {
   });
 
   async function sendRequest<T = unknown>(request: JSONRPCRequest): Promise<JSONRPCMessage & { result?: T }> {
+    console.log("sendRequest: starting", request);
     return new Promise<JSONRPCMessage & { result?: T }>((resolve, reject) => {
       const timeout = setTimeout(() => {
+        console.error("sendRequest: request timed out");
+        transport.handleMessage(() => {});
         reject(new Error('Request timed out'));
       }, 30000);
 
       const responseHandler = (response: JSONRPCMessage) => {
+        console.log("sendRequest: received response", response);
         if ('id' in response && response.id === request.id) {
           clearTimeout(timeout);
           transport.handleMessage(() => {});
+          if ('error' in response) {
+            console.error("sendRequest: received error response", response.error);
+          }
           resolve(response as JSONRPCMessage & { result?: T });
+        } else {
+          console.log("sendRequest: ignoring non-matching response");
         }
       };
 
       transport.handleMessage(responseHandler);
+      console.log("sendRequest: sending request");
       transport.sendMessage(request).catch((error: Error) => {
+        console.error("sendRequest: failed to send request", error);
         clearTimeout(timeout);
         transport.handleMessage(() => {});
         reject(error);

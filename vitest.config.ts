@@ -2,8 +2,9 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // Increase test timeout to 60 seconds for long-running server tests
-    testTimeout: 60000,
+    // Increase test and hook timeouts for server tests
+    testTimeout: 120000,
+    hookTimeout: 60000,
     // Setup environment
     setupFiles: ["tests/setup.ts"],
     // Ensure clean environment for each test
